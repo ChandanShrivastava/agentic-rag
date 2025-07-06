@@ -44,11 +44,104 @@ class GraphBuilder:
             await self.graph_client.initialize()
             self._initialized = True
     
-    async def close(self):
-        """Close graph client."""
-        if self._initialized:
-            await self.graph_client.close()
-            self._initialized = False
+    # async def close(self):
+    #     """Close graph client."""
+    #     if self._initialized:
+    #         await self.graph_client.close()
+    #         self._initialized = False
+    
+    # async def add_document_to_graph(
+    #     self,
+    #     chunks: List[DocumentChunk],
+    #     document_title: str,
+    #     document_source: str,
+    #     document_metadata: Optional[Dict[str, Any]] = None,
+    #     batch_size: int = 3  # Reduced batch size for Graphiti
+    # ) -> Dict[str, Any]:
+    #     """
+    #     Add document chunks to the knowledge graph.
+        
+    #     Args:
+    #         chunks: List of document chunks
+    #         document_title: Title of the document
+    #         document_source: Source of the document
+    #         document_metadata: Additional metadata
+    #         batch_size: Number of chunks to process in each batch
+        
+    #     Returns:
+    #         Processing results
+    #     """
+    #     if not self._initialized:
+    #         await self.initialize()
+        
+    #     if not chunks:
+    #         return {"episodes_created": 0, "errors": []}
+        
+    #     logger.info(f"Adding {len(chunks)} chunks to knowledge graph for document: {document_title}")
+    #     logger.info("⚠️ Large chunks will be truncated to avoid Graphiti token limits.")
+        
+    #     # Check for oversized chunks and warn
+    #     oversized_chunks = [i for i, chunk in enumerate(chunks) if len(chunk.content) > 6000]
+    #     if oversized_chunks:
+    #         logger.warning(f"Found {len(oversized_chunks)} chunks over 6000 chars that will be truncated: {oversized_chunks}")
+        
+    #     episodes_created = 0
+    #     errors = []
+        
+    #     # Process chunks one by one to avoid overwhelming Graphiti
+    #     for i, chunk in enumerate(chunks):
+    #         try:
+    #             # Create episode ID
+    #             episode_id = f"{document_source}_{chunk.index}_{datetime.now().timestamp()}"
+                
+    #             # Prepare episode content with size limits
+    #             episode_content = self._prepare_episode_content(
+    #                 chunk,
+    #                 document_title,
+    #                 document_metadata
+    #             )
+                
+    #             # Create source description (shorter)
+    #             source_description = f"Document: {document_title} (Chunk: {chunk.index})"
+                
+    #             # Add episode to graph
+    #             await self.graph_client.add_episode(
+    #                 episode_id=episode_id,
+    #                 content=episode_content,
+    #                 source=source_description,
+    #                 timestamp=datetime.now(timezone.utc),
+    #                 metadata={
+    #                     "document_title": document_title,
+    #                     "document_source": document_source,
+    #                     "chunk_index": chunk.index,
+    #                     "original_length": len(chunk.content),
+    #                     "processed_length": len(episode_content)
+    #                 }
+    #             )
+                
+    #             episodes_created += 1
+    #             logger.info(f"✓ Added episode {episode_id} to knowledge graph ({episodes_created}/{len(chunks)})")
+                
+    #             # Small delay between each episode to reduce API pressure
+    #             if i < len(chunks) - 1:
+    #                 await asyncio.sleep(0.5)
+                    
+    #         except Exception as e:
+    #             error_msg = f"Failed to add chunk {chunk.index} to graph: {str(e)}"
+    #             logger.error(error_msg)
+    #             errors.append(error_msg)
+                
+    #             # Continue processing other chunks even if one fails
+    #             continue
+        
+    #     result = {
+    #         "episodes_created": episodes_created,
+    #         "total_chunks": len(chunks),
+    #         "errors": errors
+    #     }
+        
+    #     logger.info(f"Graph building complete: {episodes_created} episodes created, {len(errors)} errors")
+    #     return result
     
     async def add_document_to_graph(
         self,
@@ -56,55 +149,39 @@ class GraphBuilder:
         document_title: str,
         document_source: str,
         document_metadata: Optional[Dict[str, Any]] = None,
-        batch_size: int = 3  # Reduced batch size for Graphiti
+        batch_size: int = 3
     ) -> Dict[str, Any]:
-        """
-        Add document chunks to the knowledge graph.
-        
-        Args:
-            chunks: List of document chunks
-            document_title: Title of the document
-            document_source: Source of the document
-            document_metadata: Additional metadata
-            batch_size: Number of chunks to process in each batch
-        
-        Returns:
-            Processing results
-        """
         if not self._initialized:
             await self.initialize()
-        
+
         if not chunks:
-            return {"episodes_created": 0, "errors": []}
-        
+            return {"episodes_created": 0, "relationships_created": 0, "errors": []}
+
         logger.info(f"Adding {len(chunks)} chunks to knowledge graph for document: {document_title}")
         logger.info("⚠️ Large chunks will be truncated to avoid Graphiti token limits.")
-        
-        # Check for oversized chunks and warn
+
         oversized_chunks = [i for i, chunk in enumerate(chunks) if len(chunk.content) > 6000]
         if oversized_chunks:
             logger.warning(f"Found {len(oversized_chunks)} chunks over 6000 chars that will be truncated: {oversized_chunks}")
-        
+
         episodes_created = 0
+        relationships_created = 0
         errors = []
-        
-        # Process chunks one by one to avoid overwhelming Graphiti
+
+        # Track episode node IDs for linking later
+        episode_nodes = []
+
         for i, chunk in enumerate(chunks):
             try:
-                # Create episode ID
                 episode_id = f"{document_source}_{chunk.index}_{datetime.now().timestamp()}"
-                
-                # Prepare episode content with size limits
                 episode_content = self._prepare_episode_content(
                     chunk,
                     document_title,
                     document_metadata
                 )
-                
-                # Create source description (shorter)
                 source_description = f"Document: {document_title} (Chunk: {chunk.index})"
-                
-                # Add episode to graph
+
+                # Add episode (chunk) node
                 await self.graph_client.add_episode(
                     episode_id=episode_id,
                     content=episode_content,
@@ -118,31 +195,56 @@ class GraphBuilder:
                         "processed_length": len(episode_content)
                     }
                 )
-                
+
                 episodes_created += 1
                 logger.info(f"✓ Added episode {episode_id} to knowledge graph ({episodes_created}/{len(chunks)})")
-                
-                # Small delay between each episode to reduce API pressure
+
+                episode_nodes.append({
+                    "episode_id": episode_id,
+                    "chunk_index": chunk.index
+                })
+
                 if i < len(chunks) - 1:
                     await asyncio.sleep(0.5)
-                    
+
             except Exception as e:
                 error_msg = f"Failed to add chunk {chunk.index} to graph: {str(e)}"
                 logger.error(error_msg)
                 errors.append(error_msg)
-                
-                # Continue processing other chunks even if one fails
                 continue
-        
+
+        # Build FOLLOWS relationships
+        try:
+            for i in range(len(episode_nodes) - 1):
+                source_id = episode_nodes[i]["episode_id"]
+                target_id = episode_nodes[i + 1]["episode_id"]
+
+                await self.graph_client.add_relationship(
+                    source_id=source_id,
+                    target_id=target_id,
+                    relationship_type="FOLLOWS",
+                    metadata={
+                        "document_source": document_source,
+                        "document_title": document_title
+                    }
+                )
+
+                relationships_created += 1
+        except Exception as e:
+            error_msg = f"Failed to create FOLLOWS relationships: {str(e)}"
+            logger.error(error_msg)
+            errors.append(error_msg)
+
         result = {
             "episodes_created": episodes_created,
+            "relationships_created": relationships_created,
             "total_chunks": len(chunks),
             "errors": errors
         }
-        
-        logger.info(f"Graph building complete: {episodes_created} episodes created, {len(errors)} errors")
+
+        logger.info(f"Graph building complete: {episodes_created} episodes and {relationships_created} relationships created, {len(errors)} errors")
         return result
-    
+
     def _prepare_episode_content(
         self,
         chunk: DocumentChunk,
