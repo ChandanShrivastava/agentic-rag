@@ -11,7 +11,7 @@ import json
 
 from openai import RateLimitError, APIError
 from dotenv import load_dotenv
-
+import httpx
 from .chunker import DocumentChunk
 
 # Import flexible providers
@@ -30,8 +30,11 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 # Initialize client with flexible provider
-embedding_client = get_embedding_client()
-EMBEDDING_MODEL = get_embedding_model()
+#embedding_client = get_embedding_client()
+#EMBEDDING_MODEL = get_embedding_model()
+
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
 
 class EmbeddingGenerator:
@@ -62,7 +65,8 @@ class EmbeddingGenerator:
         self.model_configs = {
             "text-embedding-3-small": {"dimensions": 1536, "max_tokens": 8191},
             "text-embedding-3-large": {"dimensions": 3072, "max_tokens": 8191},
-            "text-embedding-ada-002": {"dimensions": 1536, "max_tokens": 8191}
+            "text-embedding-ada-002": {"dimensions": 1536, "max_tokens": 8191},
+            "nomic-embed-text": {"dimensions": 768, "max_tokens": 8191}
         }
         
         if model not in self.model_configs:
@@ -71,64 +75,142 @@ class EmbeddingGenerator:
         else:
             self.config = self.model_configs[model]
     
+    # async def generate_embedding(self, text: str) -> List[float]:
+    #     """
+    #     Generate embedding for a single text.
+        
+    #     Args:
+    #         text: Text to embed
+        
+    #     Returns:
+    #         Embedding vector
+    #     """
+    #     logger.info(f"Inside generate_embedding with text: {texts}")  # Log first 50 chars
+    #     # Truncate text if too long
+    #     if len(text) > self.config["max_tokens"] * 4:  # Rough token estimation
+    #         text = text[:self.config["max_tokens"] * 4]
+        
+    #     for attempt in range(self.max_retries):
+    #         try:
+    #             response = await embedding_client.embeddings.create(
+    #                 model=self.model,
+    #                 input=text
+    #             )
+                
+    #             #return response.data[0].embedding
+    #             logger.info(f"Generated response >>>: {response}")
+    #             return response.data['embedding']
+                
+    #         except RateLimitError as e:
+    #             if attempt == self.max_retries - 1:
+    #                 raise
+                
+    #             # Exponential backoff for rate limits
+    #             delay = self.retry_delay * (2 ** attempt)
+    #             logger.warning(f"Rate limit hit, retrying in {delay}s")
+    #             await asyncio.sleep(delay)
+                
+    #         except APIError as e:
+    #             logger.error(f"OpenAI API error: {e}")
+    #             if attempt == self.max_retries - 1:
+    #                 raise
+    #             await asyncio.sleep(self.retry_delay)
+                
+    #         except Exception as e:
+    #             logger.error(f"Unexpected error generating embedding: {e}")
+    #             if attempt == self.max_retries - 1:
+    #                 raise
+    #             await asyncio.sleep(self.retry_delay)
+    
     async def generate_embedding(self, text: str) -> List[float]:
-        """
-        Generate embedding for a single text.
+        payload = {
+            "model": self.model,
+            "prompt": text
+        }
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            for attempt in range(self.max_retries):
+                try:
+                    response = await client.post(
+                        f"{OLLAMA_BASE_URL}/api/embeddings",
+                        json=payload
+                    )
+                    response.raise_for_status()
+                    return response.json()["embedding"]
+
+                except httpx.HTTPStatusError as e:
+                    logger.error(f"Ollama API error: {e}")
+                    if attempt == self.max_retries - 1:
+                        raise
+                    await asyncio.sleep(self.retry_delay)
+
+                except Exception as e:
+                    logger.error(f"Unexpected error: {e}")
+                    if attempt == self.max_retries - 1:
+                        raise
+                    await asyncio.sleep(self.retry_delay)
+
+    
+    # async def generate_embeddings_batch(
+    #     self,
+    #     texts: List[str]
+    # ) -> List[List[float]]:
+    #     """
+    #     Generate embeddings for a batch of texts.
         
-        Args:
-            text: Text to embed
+    #     Args:
+    #         texts: List of texts to embed
         
-        Returns:
-            Embedding vector
-        """
-        # Truncate text if too long
-        if len(text) > self.config["max_tokens"] * 4:  # Rough token estimation
-            text = text[:self.config["max_tokens"] * 4]
+    #     Returns:
+    #         List of embedding vectors
+    #     """
+    #     logger.info(f"Inside generate_embeddings_batch with text: {texts}...")  # Log first 50 chars
+    #     # Filter and truncate texts
+    #     processed_texts = []
+    #     for text in texts:
+    #         if not text or not text.strip():
+    #             processed_texts.append("")
+    #             continue
+                
+    #         # Truncate if too long
+    #         if len(text) > self.config["max_tokens"] * 4:
+    #             text = text[:self.config["max_tokens"] * 4]
+            
+    #         processed_texts.append(text)
         
-        for attempt in range(self.max_retries):
-            try:
-                response = await embedding_client.embeddings.create(
-                    model=self.model,
-                    input=text
-                )
+    #     for attempt in range(self.max_retries):
+    #         try:
+    #             response = await embedding_client.embeddings.create(
+    #                 model=self.model,
+    #                 input=processed_texts
+    #             )
                 
-                return response.data[0].embedding
+    #             return [data.embedding for data in response.data]
                 
-            except RateLimitError as e:
-                if attempt == self.max_retries - 1:
-                    raise
+    #         except RateLimitError as e:
+    #             if attempt == self.max_retries - 1:
+    #                 raise
                 
-                # Exponential backoff for rate limits
-                delay = self.retry_delay * (2 ** attempt)
-                logger.warning(f"Rate limit hit, retrying in {delay}s")
-                await asyncio.sleep(delay)
+    #             delay = self.retry_delay * (2 ** attempt)
+    #             logger.warning(f"Rate limit hit, retrying batch in {delay}s")
+    #             await asyncio.sleep(delay)
                 
-            except APIError as e:
-                logger.error(f"OpenAI API error: {e}")
-                if attempt == self.max_retries - 1:
-                    raise
-                await asyncio.sleep(self.retry_delay)
+    #         except APIError as e:
+    #             logger.error(f"OpenAI API error in batch: {e}")
+    #             if attempt == self.max_retries - 1:
+    #                 # Fallback to individual processing
+    #                 return await self._process_individually(processed_texts)
+    #             await asyncio.sleep(self.retry_delay)
                 
-            except Exception as e:
-                logger.error(f"Unexpected error generating embedding: {e}")
-                if attempt == self.max_retries - 1:
-                    raise
-                await asyncio.sleep(self.retry_delay)
+    #         except Exception as e:
+    #             logger.error(f"Unexpected error in batch embedding: {e}")
+    #             if attempt == self.max_retries - 1:
+    #                 return await self._process_individually(processed_texts)
+    #             await asyncio.sleep(self.retry_delay)
     
     async def generate_embeddings_batch(
         self,
         texts: List[str]
     ) -> List[List[float]]:
-        """
-        Generate embeddings for a batch of texts.
-        
-        Args:
-            texts: List of texts to embed
-        
-        Returns:
-            List of embedding vectors
-        """
-        # Filter and truncate texts
         processed_texts = []
         for text in texts:
             if not text or not text.strip():
@@ -137,39 +219,18 @@ class EmbeddingGenerator:
                 
             # Truncate if too long
             if len(text) > self.config["max_tokens"] * 4:
-                text = text[:self.config["max_tokens"] * 4]
-            
+                text = text[:self.config["max_tokens"] * 4]            
             processed_texts.append(text)
         
-        for attempt in range(self.max_retries):
+        results = []
+        for text in processed_texts:
             try:
-                response = await embedding_client.embeddings.create(
-                    model=self.model,
-                    input=processed_texts
-                )
-                
-                return [data.embedding for data in response.data]
-                
-            except RateLimitError as e:
-                if attempt == self.max_retries - 1:
-                    raise
-                
-                delay = self.retry_delay * (2 ** attempt)
-                logger.warning(f"Rate limit hit, retrying batch in {delay}s")
-                await asyncio.sleep(delay)
-                
-            except APIError as e:
-                logger.error(f"OpenAI API error in batch: {e}")
-                if attempt == self.max_retries - 1:
-                    # Fallback to individual processing
-                    return await self._process_individually(processed_texts)
-                await asyncio.sleep(self.retry_delay)
-                
+                emb = await self.generate_embedding(text)
+                results.append(emb)
             except Exception as e:
-                logger.error(f"Unexpected error in batch embedding: {e}")
-                if attempt == self.max_retries - 1:
-                    return await self._process_individually(processed_texts)
-                await asyncio.sleep(self.retry_delay)
+                logger.warning(f"Failed to embed text in batch, using zero vector: {e}")
+                results.append([0.0] * self.config["dimensions"])
+        return results
     
     async def _process_individually(
         self,
