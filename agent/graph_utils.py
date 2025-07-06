@@ -17,7 +17,6 @@ from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
 from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
 from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
 from dotenv import load_dotenv
-from .ollama import OllamaEmbedderConfig, OllamaEmbedder
 
 # Load environment variables
 load_dotenv()
