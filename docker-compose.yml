@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  neo4j:
+    image: neo4j:latest # Or a specific version like neo4j:5.20.0
+    hostname: neo4j
+    container_name: neo4j
+    ports:
+      - "7474:7474" # Neo4j Browser
+      - "7687:7687"
+    volumes:
+      - ./neo4j/data:/data
+      - ./neo4j/logs:/logs
+      - ./neo4j/config:/config # If you have custom config
+      - ./neo4j/plugins:/plugins # If you have any plugins
+    environment:
+      - NEO4J_AUTH=neo4j/neo4j_password # **IMPORTANT: Set your strong password**
+    restart: always
