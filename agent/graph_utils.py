@@ -436,6 +436,42 @@ async def get_entity_relationships(
     """
     return await graph_client.get_related_entities(entity, depth=depth)
 
+async def add_relationship(
+    self,
+    source_id: str,
+    target_id: str,
+    relationship_type: str,
+    metadata: Optional[Dict[str, Any]] = None
+) -> None:
+    """
+    Create a relationship between two nodes.
+
+    Args:
+        source_id: ID of the source node
+        target_id: ID of the target node
+        relationship_type: Type of relationship (e.g., 'FOLLOWS', 'PART_OF')
+        metadata: Optional dictionary of properties to attach to the relationship
+    """
+    if not self._driver:
+        raise RuntimeError("Graph driver is not initialized")
+
+    # Convert metadata to Cypher properties string
+    metadata_str = ", ".join([f"{key}: ${key}" for key in metadata]) if metadata else ""
+
+    cypher = f"""
+    MATCH (a {{ episode_id: $source_id }})
+    MATCH (b {{ episode_id: $target_id }})
+    MERGE (a)-[r:{relationship_type} {{{metadata_str}}}]->(b)
+    """
+
+    params = {
+        "source_id": source_id,
+        "target_id": target_id,
+        **(metadata or {})
+    }
+
+    async with self._driver.session(database=self._database) as session:
+        await session.execute_write(lambda tx: tx.run(cypher, params))
 
 async def test_graph_connection() -> bool:
     """
